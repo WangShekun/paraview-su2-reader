@@ -1,46 +1,46 @@
-# SU2 网格读取器（ParaView Python 插件）🧩
+# SU2 Mesh Reader (ParaView Python Plugin) 🧩
 
-这是一个轻量的 ParaView Python Reader 插件，用于读取 **SU2 网格文件（`.su2`）** 并进行可视化。  
-分享目的很简单：**我能用，也分享给你用**；**不提供支持，不承担任何责任** ⚠️
+A lightweight ParaView Python reader plugin for visualizing **SU2 mesh files (`.su2`)**.  
+Shared for convenience: **no support, no warranty** ⚠️
 
-该 Reader 提供两个输出端口：
-- **Port 0：体网格（Volume Mesh）**：`vtkUnstructuredGrid` 
-- **Port 1：边界网格（按 Marker 分组）**：`vtkMultiBlockDataSet`（每个 block 对应一个 SU2 marker）
+This reader provides two output ports:
+- **Port 0: Volume Mesh** (`vtkUnstructuredGrid`) 
+- **Port 1: Boundary Meshes (grouped by marker)** (`vtkMultiBlockDataSet`, one block per SU2 marker) 
 
-**已测试环境 ✅**
+**Tested on ✅**
 - Ubuntu 24.04 LTS + ParaView 6.0.1  
 - Windows 11 + ParaView 5.13.3  
 
 ---
 
-## 安装与加载 🔧
+## Installation 🔧
 
-1. 打开 ParaView  
+1. Open ParaView  
 2. `Tools → Manage Plugins...`  
-3. `Load New...` 选择 `SU2Reader.py`  
-4. （建议）勾选 **Auto Load**，以后启动自动加载  
+3. `Load New...` and select `SU2Reader.py`  
+4. (Recommended) enable **Auto Load** so it loads automatically on startup  
 
 ---
 
-## 使用方法 ▶️
+## Usage ▶️
 
-1. `File → Open` 选择 `*.su2` 文件  
-2. 点击 `Apply`  
+1. `File → Open` and choose a `*.su2` file  
+2. Click `Apply`  
 
-打开后你会得到两种输出可视化 👀：
-- **Port 0：体网格**（整体网格）
-- **Port 1：边界网格（按 marker 分组）**（MultiBlock，可按 marker 单独查看/提取）
-
----
-
-## 免责声明（重要）⚠️
-
-本项目仅用于分享与参考，按 **“现状（AS IS）”** 提供。  
-作者不提供任何形式的支持或担保，也不对使用本项目产生的任何问题、损失或纠纷承担责任。  
-使用即表示你理解并接受上述条款。
+After opening, you will have two outputs to visualize 👀:
+- **Port 0: Volume mesh** (the whole mesh) 
+- **Port 1: Boundary meshes grouped by marker** (MultiBlock; view/extract markers individually) 
 
 ---
 
-## 开源协议 📄
+## Disclaimer (Important) ⚠️
 
-MIT License（见仓库根目录 `LICENSE` 文件）。
+This project is shared for reference and convenience only and is provided **"AS IS"**.  
+No support or warranty is provided. The author is not responsible for any issues, damages, or disputes arising from the use of this code.  
+Using this project means you understand and accept these terms.
+
+---
+
+## License 📄
+
+MIT License (see `LICENSE` in the repository root).
