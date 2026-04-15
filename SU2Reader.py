@@ -7,8 +7,8 @@
 #   Output 1: Boundary Meshes    (vtkMultiBlockDataSet, one block per marker)
 #
 # Design notes:
-# - 3D import logic is strictly preserved
-# - 2D support is added silently (no behavior change for 3D)
+# - Volume and marker connectivity follow SU2's VTK-style element sizes
+# - Trailing legacy IDs are ignored when present
 # - Marker names are kept for MultiBlock inspection
 # - No data arrays are attached (pure geometry)
 # -----------------------------------------------------------------------------
@@ -36,7 +36,7 @@ VTK_TYPE_MAP = {
 
 # -----------------------------------------------------------------------------
 # Expected node counts for SU2 elements
-# (ONLY used to fix 2D meshes with trailing element IDs)
+# (used to read only the connectivity nodes and ignore trailing legacy IDs)
 # -----------------------------------------------------------------------------
 SU2_NNODES = {
     3: 2,
@@ -66,9 +66,78 @@ def _strip_arrays(ds):
 # -----------------------------------------------------------------------------
 # Core SU2 reader
 # -----------------------------------------------------------------------------
+def _clean_line(line):
+    return line.split("%", 1)[0].strip()
+
+
+def _parse_kv_value(line, key):
+    head, sep, tail = line.partition("=")
+    if sep != "=" or head.strip() != key:
+        raise RuntimeError(f"Expected '{key}=' line, got: {line}")
+    value = tail.strip()
+    if not value:
+        raise RuntimeError(f"Missing value for {key}")
+    return value
+
+
+def _parse_count_line(lines, index, key):
+    if index >= len(lines):
+        raise RuntimeError(f"Expected '{key}=' line, got EOF")
+    return int(_parse_kv_value(lines[index], key))
+
+
+def _require_data_line(lines, index, context):
+    if index >= len(lines):
+        raise RuntimeError(f"Unexpected EOF while reading {context}")
+    return lines[index]
+
+
+def _parse_point_line(line, ndime, point_index):
+    parts = line.split()
+    if len(parts) < ndime:
+        raise RuntimeError(
+            f"Point {point_index} has {len(parts)} values, expected at least {ndime}"
+        )
+    return [float(value) for value in parts[:ndime]]
+
+
+def _parse_element_line(line, context, allowed_types=None):
+    parts = [int(value) for value in line.split()]
+    if not parts:
+        raise RuntimeError(f"Empty {context} line")
+
+    etype = parts[0]
+    if allowed_types is not None and etype not in allowed_types:
+        raise RuntimeError(f"Unsupported {context} type {etype}")
+    if etype not in SU2_NNODES:
+        raise RuntimeError(f"Unsupported {context} type {etype}")
+
+    expected = 1 + SU2_NNODES[etype]
+    if len(parts) < expected:
+        raise RuntimeError(
+            f"{context} type {etype} has {len(parts) - 1} nodes, expected {SU2_NNODES[etype]}"
+        )
+
+    return etype, parts[1:expected]
+
+
+def _validate_conn(conn, npoints, context):
+    if not conn:
+        raise RuntimeError(f"Empty connectivity for {context}")
+    for nid in conn:
+        if nid < 0 or nid >= npoints:
+            raise RuntimeError(
+                f"Node index {nid} out of range for {context}; expected 0 <= nid < {npoints}"
+            )
+
+
 def read_su2(path):
     with open(path, "r") as f:
-        lines = [l.strip() for l in f if l.strip() and not l.startswith("%")]
+        lines = []
+        for raw in f:
+            line = _clean_line(raw)
+            if line:
+                lines.append(line)
 
     def find(key):
         for i, l in enumerate(lines):
@@ -80,65 +149,58 @@ def read_su2(path):
     i = find("NDIME")
     if i is None:
         raise RuntimeError("NDIME not found")
-    ndime = int(lines[i].split("=")[1])
+    ndime = int(_parse_kv_value(lines[i], "NDIME"))
+    if ndime not in (2, 3):
+        raise RuntimeError(f"Unsupported NDIME={ndime}; expected 2 or 3")
 
     # ---- NPOIN ----
     i = find("NPOIN")
     if i is None:
         raise RuntimeError("NPOIN not found")
-    npoin = int(lines[i].split("=")[1])
+    npoin = int(_parse_kv_value(lines[i], "NPOIN"))
 
     pts = np.zeros((npoin, 3))
     for k in range(npoin):
-        xyz = list(map(float, lines[i + 1 + k].split()[:ndime]))
+        line = _require_data_line(lines, i + 1 + k, f"point {k}")
+        xyz = _parse_point_line(line, ndime, k)
         pts[k, :ndime] = xyz
 
     # ---- NELEM ----
     vol_conns, vol_ctypes = [], []
     i_elem = find("NELEM")
-    if i_elem is not None:
-        nelem = int(lines[i_elem].split("=")[1])
-        for k in range(nelem):
-            parts = list(map(int, lines[i_elem + 1 + k].split()))
-            etype = parts[0]
-
-            # Ignore unsupported element types defensively
-            if etype not in VTK_TYPE_MAP:
-                continue
-
-            # 2D fix: trim possible trailing element IDs
-            # 3D path: EXACTLY identical to original behavior
-            if ndime == 2 and etype in SU2_NNODES:
-                conn = parts[1:1 + SU2_NNODES[etype]]
-            else:
-                conn = parts[1:]
-
-            vol_conns.append(conn)
-            vol_ctypes.append(VTK_TYPE_MAP[etype])
+    if i_elem is None:
+        raise RuntimeError("NELEM not found")
+    nelem = int(_parse_kv_value(lines[i_elem], "NELEM"))
+    for k in range(nelem):
+        line = _require_data_line(lines, i_elem + 1 + k, f"volume element {k}")
+        etype, conn = _parse_element_line(line, f"volume element {k}", VTK_TYPE_MAP)
+        vol_conns.append(conn)
+        vol_ctypes.append(VTK_TYPE_MAP[etype])
 
     # ---- NMARK ----
     i = find("NMARK")
     if i is None:
         raise RuntimeError("NMARK not found")
-    nmark = int(lines[i].split("=")[1])
+    nmark = int(_parse_kv_value(lines[i], "NMARK"))
 
     markers = {}
     p = i + 1
+    allowed_marker_types = {3} if ndime == 2 else {5, 9}
     for _ in range(nmark):
-        tag = lines[p].split("=")[1].strip()
+        tag = _parse_kv_value(_require_data_line(lines, p, "MARKER_TAG"), "MARKER_TAG")
         p += 1
-        ne = int(lines[p].split("=")[1])
+        ne = _parse_count_line(lines, p, "MARKER_ELEMS")
         p += 1
 
         elems = []
-        for _ in range(ne):
-            e = list(map(int, lines[p].split()))
-
-            # 2D fix: marker elements may also carry trailing IDs
-            if ndime == 2 and e and e[0] in SU2_NNODES:
-                e = e[:1 + SU2_NNODES[e[0]]]
-
-            elems.append(e)
+        for elem_idx in range(ne):
+            line = _require_data_line(lines, p, f"marker element {elem_idx} for '{tag}'")
+            etype, conn = _parse_element_line(
+                line,
+                f"marker element {elem_idx} for '{tag}'",
+                allowed_marker_types,
+            )
+            elems.append([etype] + conn)
             p += 1
 
         markers[tag] = elems
@@ -159,6 +221,7 @@ def build_ugrid(points, conns, ctypes):
     ug.SetPoints(vtk_pts)
 
     for conn, ct in zip(conns, ctypes):
+        _validate_conn(conn, points.shape[0], f"cell type {ct}")
         ids = vtk.vtkIdList()
         ids.SetNumberOfIds(len(conn))
         for j, nid in enumerate(conn):
@@ -170,7 +233,7 @@ def build_ugrid(points, conns, ctypes):
 
 
 # -----------------------------------------------------------------------------
-# Build compacted surface grid for one marker (unchanged 3D behavior)
+# Build compacted surface grid for one marker (3D markers: tri/quad)
 # -----------------------------------------------------------------------------
 def build_surface_compacted(global_pts, elems):
     used = set()
@@ -182,6 +245,7 @@ def build_surface_compacted(global_pts, elems):
         etype = int(e[0])
         if etype in (5, 9):  # tri / quad only
             conn = e[1:]
+            _validate_conn(conn, global_pts.shape[0], f"marker surface type {etype}")
             conns.append(conn)
             ctypes.append(VTK_TYPE_MAP[etype])
             used.update(conn)
@@ -211,6 +275,7 @@ def build_boundary_compacted_2d(global_pts, elems):
         if int(e[0]) == 3:  # line
             conn = e[1:3]
             if len(conn) == 2:
+                _validate_conn(conn, global_pts.shape[0], "2D boundary line")
                 conns.append(conn)
                 ctypes.append(VTK_TYPE_MAP[3])
                 used.update(conn)
@@ -291,11 +356,10 @@ class SU2MeshReader(VTKPythonAlgorithmBase):
             mb.SetBlock(i, b)
             # Keep marker names for ParaView inspection
             mb.GetMetaData(i).Set(
-                vtk.vtkCompositeDataSet.NAME(), f"marker:{tag}"
+                vtk.vtkCompositeDataSet.NAME(), tag
             )
 
         out1 = vtk.vtkMultiBlockDataSet.GetData(outInfo, 1)
         out1.ShallowCopy(mb)
 
         return 1
-
