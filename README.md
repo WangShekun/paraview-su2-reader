@@ -1,46 +1,57 @@
-# SU2 Mesh Reader (ParaView Python Plugin) 🧩
+# SU2 Mesh Reader for ParaView
 
-A lightweight ParaView Python reader plugin for visualizing **SU2 mesh files (`.su2`)**.  
-Shared for convenience: **no support, no warranty** ⚠️
+A ParaView Python plugin for reading `.su2` meshes and displaying the interior
+mesh and boundary markers as separate outputs.
 
-This reader provides two output ports:
-- **Port 0: Volume Mesh** (`vtkUnstructuredGrid`) 
-- **Port 1: Boundary Meshes (grouped by marker)** (`vtkMultiBlockDataSet`, one block per SU2 marker) 
+![SU2 mesh and wing boundary displayed in ParaView](docs/screenshots/overview.png)
 
-**Tested on ✅**
-- Ubuntu 24.04 LTS + ParaView 6.0.1  
-- Windows 11 + ParaView 5.13.3  
+Both 2D and 3D meshes are supported, including triangles, quadrilaterals,
+tetrahedra, hexahedra, prisms, and pyramids. Boundary markers retain their SU2
+names and can be displayed individually.
 
----
+## Installation
 
-## Installation 🔧
+Download [SU2Reader.py](https://raw.githubusercontent.com/WangShekun/paraview-su2-reader/main/SU2Reader.py)
+and save it locally. In ParaView:
 
-1. Open ParaView  
-2. `Tools → Manage Plugins...`  
-3. `Load New...` and select `SU2Reader.py`  
-4. (Recommended) enable **Auto Load** so it loads automatically on startup  
+1. Open Tools > Manage Plugins.
+2. Click Load New and select `SU2Reader.py`.
+3. Check that SU2Reader is marked Loaded.
+4. Enable Auto Load if you want the plugin to load at startup.
 
----
+![SU2Reader loaded in the ParaView Plugin Manager](docs/screenshots/installation.png)
 
-## Usage ▶️
+No compilation is needed. Use a ParaView installation with Python support.
+To update the plugin, replace the file and restart ParaView.
 
-1. `File → Open` and choose a `*.su2` file  
-2. Click `Apply`  
+Tested with ParaView 6.0.1 on Ubuntu 24.04 LTS and ParaView 5.13.3 on Windows 11.
 
-After opening, you will have two outputs to visualize 👀:
-- **Port 0: Volume mesh** (the whole mesh) 
-- **Port 1: Boundary meshes grouped by marker** (MultiBlock; view/extract markers individually) 
+## Usage
 
----
+### Open a mesh
 
-## Disclaimer (Important) ⚠️
+Open a `.su2` file through File > Open and click Apply. If ParaView asks for a
+reader, choose SU2 Mesh Reader.
 
-This project is shared for reference and convenience only and is provided **"AS IS"**.  
-No support or warranty is provided. The author is not responsible for any issues, damages, or disputes arising from the use of this code.  
-Using this project means you understand and accept these terms.
+Expand the reader in the Pipeline Browser to access its outputs:
 
----
+| Output | Contents |
+| --- | --- |
+| Volume Mesh | All interior elements |
+| Boundary Meshes | One block per boundary marker |
 
-## License 📄
+Use the eye icons beside the outputs to switch their visibility. Select Surface
+With Edges to show the mesh edges.
 
-MIT License (see `LICENSE` in the repository root).
+### Select boundary markers
+
+1. Open View > MultiBlock Inspector.
+2. Select Boundary Meshes in the Pipeline Browser and click its eye icon to show it.
+3. Expand the block tree to see the marker names.
+4. Use the checkboxes to show or hide individual markers.
+
+![Output ports and boundary marker controls highlighted in ParaView](docs/screenshots/boundary-selection.png)
+
+## License
+
+[MIT](LICENSE)
