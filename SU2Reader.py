@@ -379,12 +379,12 @@ def build_compacted(global_pts, groups):
     extensions="su2",
     file_description="SU2 Mesh"
 )
-@smhint.xml("""
-  <Hints>
+@smproperty.xml("""
     <OutputPort index="0" name="Volume Mesh"/>
     <OutputPort index="1" name="Boundary Meshes"/>
+""")
+@smhint.xml("""
     <NoDataArrays/>
-  </Hints>
 """)
 class SU2MeshReader(VTKPythonAlgorithmBase):
 
