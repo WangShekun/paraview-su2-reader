@@ -3,8 +3,8 @@
 # ParaView Python Reader Plugin for SU2 mesh
 #
 # Outputs:
-#   Output 0: Volume Mesh        (vtkUnstructuredGrid)
-#   Output 1: Boundary Meshes    (vtkMultiBlockDataSet, one block per marker)
+#   Output 0: Volume Mesh        (vtkMultiBlockDataSet, one grid per zone)
+#   Output 1: Boundary Meshes    (vtkMultiBlockDataSet, zones containing markers)
 #
 # Design notes:
 # - Volume and marker connectivity follow SU2's VTK-style element sizes
@@ -217,17 +217,46 @@ def _bulk_parse_elements(lines, start, nelem, allowed_types, context):
 # -----------------------------------------------------------------------------
 # Core SU2 reader
 # -----------------------------------------------------------------------------
-def read_su2(path):
+def read_su2(path, read_volume: bool = True, read_boundaries: bool = True):
+    """Yield each zone independently, buffering only one zone's text at a time."""
+    zone_id = None
+    nzone = 1
+    seen = set()
+    lines = []
     with open(path, "r") as f:
-        lines = []
         for raw in f:
             line = _clean_line(raw)
-            if line:
+            if not line:
+                continue
+            if line.startswith("NZONE") and line.partition("=")[0].strip() == "NZONE":
+                nzone = int(_parse_kv_value(line, "NZONE"))
+                if nzone < 1:
+                    raise RuntimeError("NZONE must be positive")
+            elif line.startswith("IZONE") and line.partition("=")[0].strip() == "IZONE":
+                if zone_id is not None:
+                    yield zone_id, _read_zone(lines, read_volume, read_boundaries)
+                lines = []
+                zone_id = int(_parse_kv_value(line, "IZONE"))
+                if zone_id in seen or not 1 <= zone_id <= nzone:
+                    raise RuntimeError(f"Invalid or duplicate IZONE={zone_id} for NZONE={nzone}")
+                seen.add(zone_id)
+            else:
                 lines.append(line)
 
+    if zone_id is None:
+        if nzone != 1:
+            raise RuntimeError(f"NZONE={nzone} requires IZONE sections")
+        zone_id = 1
+        seen.add(zone_id)
+    if len(seen) != nzone:
+        raise RuntimeError(f"NZONE={nzone}, but found {len(seen)} zones")
+    yield zone_id, _read_zone(lines, read_volume, read_boundaries)
+
+
+def _read_zone(lines, read_volume: bool, read_boundaries: bool):
     def find(key):
         for i, l in enumerate(lines):
-            if l.startswith(key):
+            if l.startswith(key) and l.partition("=")[0].strip() == key:
                 return i
         return None
 
@@ -248,13 +277,18 @@ def read_su2(path):
     pts = _bulk_parse_points(lines, i + 1, npoin, ndime)
 
     # ---- NELEM ----
-    i_elem = find("NELEM")
-    if i_elem is None:
-        raise RuntimeError("NELEM not found")
-    nelem = int(_parse_kv_value(lines[i_elem], "NELEM"))
-    vol_groups = _bulk_parse_elements(
-        lines, i_elem + 1, nelem, set(VTK_TYPE_MAP.keys()), "volume element"
-    )
+    vol_groups = []
+    if read_volume:
+        i_elem = find("NELEM")
+        if i_elem is None:
+            raise RuntimeError("NELEM not found")
+        nelem = int(_parse_kv_value(lines[i_elem], "NELEM"))
+        vol_groups = _bulk_parse_elements(
+            lines, i_elem + 1, nelem, set(VTK_TYPE_MAP.keys()), "volume element"
+        )
+
+    if not read_boundaries:
+        return ndime, pts, vol_groups, []
 
     # ---- NMARK ----
     i = find("NMARK")
@@ -391,6 +425,8 @@ class SU2MeshReader(VTKPythonAlgorithmBase):
     def __init__(self):
         super().__init__(nInputPorts=0, nOutputPorts=2)
         self._filename = None
+        self._read_volume = True
+        self._read_boundaries = True
 
     @smproperty.stringvector(name="FileName")
     @smdomain.filelist()
@@ -400,37 +436,64 @@ class SU2MeshReader(VTKPythonAlgorithmBase):
             self._filename = fname
             self.Modified()
 
+    @smproperty.intvector(
+        name="ReadVolumeMesh", label="Read Volume Mesh",
+        number_of_elements=1, default_values=1, animateable=0,
+    )
+    @smdomain.xml('<BooleanDomain name="bool"/>')
+    def SetReadVolumeMesh(self, enabled: int) -> None:
+        if bool(enabled) != self._read_volume:
+            self._read_volume = bool(enabled)
+            self.Modified()
+
+    @smproperty.intvector(
+        name="ReadBoundaryMeshes", label="Read Boundary Meshes",
+        number_of_elements=1, default_values=1, animateable=0,
+    )
+    @smdomain.xml('<BooleanDomain name="bool"/>')
+    def SetReadBoundaryMeshes(self, enabled: int) -> None:
+        if bool(enabled) != self._read_boundaries:
+            self._read_boundaries = bool(enabled)
+            self.Modified()
+
     def FillOutputPortInformation(self, port, info):
-        if port == 0:
-            info.Set(vtk.vtkDataObject.DATA_TYPE_NAME(), "vtkUnstructuredGrid")
-        else:
-            info.Set(vtk.vtkDataObject.DATA_TYPE_NAME(), "vtkMultiBlockDataSet")
+        info.Set(vtk.vtkDataObject.DATA_TYPE_NAME(), "vtkMultiBlockDataSet")
         return 1
 
     def RequestData(self, request, inInfo, outInfo):
         if not self._filename:
             return 0
 
-        ndime, pts, vol_groups, marker_groups = read_su2(self._filename)
-
-        # ---- Output 0: Volume mesh ----
-        out0 = vtk.vtkUnstructuredGrid.GetData(outInfo, 0)
-        out0.ShallowCopy(build_ugrid(pts, vol_groups))
-
-        # ---- Output 1: Boundary meshes (MultiBlock) ----
-        mb = vtk.vtkMultiBlockDataSet()
-        blocks = []
-        for tag, groups in marker_groups:
-            surf = build_compacted(pts, groups)
-            if surf is not None:
-                blocks.append((tag, surf))
-
-        mb.SetNumberOfBlocks(len(blocks))
-        for i, (tag, b) in enumerate(blocks):
-            mb.SetBlock(i, b)
-            mb.GetMetaData(i).Set(vtk.vtkCompositeDataSet.NAME(), tag)
-
+        out0 = vtk.vtkMultiBlockDataSet.GetData(outInfo, 0)
         out1 = vtk.vtkMultiBlockDataSet.GetData(outInfo, 1)
-        out1.ShallowCopy(mb)
+        if not (self._read_volume or self._read_boundaries):
+            out0.Initialize()
+            out1.Initialize()
+            return 1
+
+        volumes = vtk.vtkMultiBlockDataSet()
+        boundaries = vtk.vtkMultiBlockDataSet()
+        name_key = vtk.vtkCompositeDataSet.NAME()
+        for i, (zone_id, zone) in enumerate(read_su2(
+            self._filename, self._read_volume, self._read_boundaries
+        )):
+            _, pts, vol_groups, marker_groups = zone
+            name = f"Zone {zone_id}"
+            if self._read_volume:
+                volumes.SetBlock(i, build_ugrid(pts, vol_groups))
+                volumes.GetMetaData(i).Set(name_key, name)
+            if self._read_boundaries:
+                markers = vtk.vtkMultiBlockDataSet()
+                for tag, groups in marker_groups:
+                    surface = build_compacted(pts, groups)
+                    if surface is not None:
+                        j = markers.GetNumberOfBlocks()
+                        markers.SetBlock(j, surface)
+                        markers.GetMetaData(j).Set(name_key, tag)
+                boundaries.SetBlock(i, markers)
+                boundaries.GetMetaData(i).Set(name_key, name)
+
+        out0.ShallowCopy(volumes)
+        out1.ShallowCopy(boundaries)
 
         return 1
