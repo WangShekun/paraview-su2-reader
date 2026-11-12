@@ -7,7 +7,8 @@ mesh and boundary markers as separate outputs.
 
 Both 2D and 3D meshes are supported, including triangles, quadrilaterals,
 tetrahedra, hexahedra, prisms, and pyramids. Boundary markers retain their SU2
-names and can be displayed individually.
+names and can be displayed individually. Multi-zone files using `NZONE` and
+`IZONE` are supported.
 
 ## Installation
 
@@ -28,29 +29,43 @@ Tested with ParaView 6.0.1 on Ubuntu 24.04 LTS and ParaView 5.13.3 on Windows 11
 
 ## Usage
 
-### Open a mesh
+### Load a mesh
 
-Open a `.su2` file through File > Open and click Apply. If ParaView asks for a
-reader, choose SU2 Mesh Reader.
+Open a `.su2` file through File > Open. If ParaView asks for a reader, choose
+SU2 Mesh Reader.
+
+In Properties, choose what to read using Read Volume Mesh and Read Boundary
+Meshes, then click Apply. Both are enabled by default and apply to single-zone
+and multi-zone files alike. To load only the boundaries, uncheck Read Volume Mesh.
 
 Expand the reader in the Pipeline Browser to access its outputs:
 
 | Output | Contents |
 | --- | --- |
-| Volume Mesh | All interior elements |
-| Boundary Meshes | One block per boundary marker |
+| Volume Mesh | Interior mesh blocks, one per zone |
+| Boundary Meshes | Boundary markers grouped by zone |
 
 Use the eye icons beside the outputs to switch their visibility. Select Surface
 With Edges to show the mesh edges.
 
-### Select boundary markers
+### Show boundary markers
 
 1. Open View > MultiBlock Inspector.
 2. Select Boundary Meshes in the Pipeline Browser and click its eye icon to show it.
-3. Expand the block tree to see the marker names.
+3. Expand a zone in the block tree to see its marker names.
 4. Use the checkboxes to show or hide individual markers.
 
 ![Output ports and boundary marker controls highlighted in ParaView](docs/screenshots/boundary-selection.png)
+
+### Multi-zone meshes
+
+Each zone is listed separately in the MultiBlock Inspector. Select Volume Mesh
+to control zone visibility, or Boundary Meshes to select markers within each
+zone. Single-zone meshes appear under Zone 1.
+
+The example below shows the boundary meshes of a five-zone pipe.
+
+![Boundaries of a five-zone pipe, with boundary-only loading and the zone hierarchy highlighted](docs/screenshots/multizone.png)
 
 ## License
 
